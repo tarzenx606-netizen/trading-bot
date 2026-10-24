@@ -1,10 +1,11 @@
-
 name: Build APK
 on:
   workflow_dispatch:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    env:
+      JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
     steps:
       - uses: actions/checkout@v4
       - name: Setup Python
@@ -17,15 +18,23 @@ jobs:
           sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
           pip install --upgrade pip
           pip install buildozer cython==0.29.36
+      - name: Pre-install SDK
+        run: |
+          mkdir -p ~/.buildozer/android/platform/android-sdk/tools
+          cd ~/.buildozer/android/platform/android-sdk
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdtools.zip
+          unzip -q cmdtools.zip
+          ln -s ../cmdline-tools/bin tools/bin
+          mkdir -p licenses
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > licenses/android-sdk-license
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" > licenses/android-sdk-preview-license
       - name: Build APK
         run: |
           git config --global --add safe.directory '*'
-          mkdir -p ~/.buildozer/android/platform/android-sdk/licenses
-          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
-          echo "84831b9409646a918e30573bab4c9c91346d8abd" > ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-preview-license
           yes | buildozer android debug
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: trading-signal-bot-apk
           path: bin/*.apk
+
