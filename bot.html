@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ur">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Trading Bot</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0d1117; color:#fff; font-family:Arial; height:100vh; display:flex; flex-direction:column; }
+  #top { padding:8px; background:#161b22; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  select, button { background:#21262d; color:#fff; border:1px solid #444; padding:8px 10px; border-radius:6px; font-size:14px; }
+  button { background:#238636; border:none; font-weight:bold; }
+  #banner { padding:10px; text-align:center; font-size:16px; font-weight:bold; background:#161b22; border-bottom:1px solid #333; }
+  #chart { flex:1; min-height:0; }
+  #rsi { height:110px; }
+  .buy { color:#00e676; } .sell { color:#ff5252; } .none { color:#aaa; }
+</style>
+</head>
+<body>
+<div id="top">
+  <select id="sym">
+    <option>BTCUSDT</option><option>ETHUSDT</option>
+    <option>SOLUSDT</option><option>XRPUSDT</option><option>DOGEUSDT</option>
+  </select>
+  <select id="tf">
+    <option value="1m">1 min</option><option value="5m">5 min</option>
+    <option value="15m">15 min</option><option value="1h" selected>1h</option>
+    <option value="4h">4h</option><option value="1d">1d</option>
+  </select>
+  <button onclick="load()">REFRESH</button>
+  <span id="clock" style="margin-left:auto;color:#8b949e;font-size:13px;"></span>
+</div>
+<div id="banner">Loading...</div>
+<div id="chart"></div>
+<div id="rsi"></div>
+<script>
+let chart, candleSeries, ema9, ema21, vwapS, volSeries, rsiChart, rsiSeries;
+
+function ema(vals, p) {
+  const k = 2/(p+1); let out = [], e = vals[0];
+  for (const v of vals) { e = v*k + e*(1-k); out.push(e); }
+  return out;
+}
+function rsi(closes, p=14) {
+  let out = new Array(closes.length).fill(50), ag=0, al=0;
+  for (let i=1;i<closes.length;i++) {
+    const d = closes[i]-closes[i-1], g = Math.max(d,0), l = Math.max(-d,0);
+    if (i<=p) { ag+=g/p; al+=l/p; } else { ag=(ag*(p-1)+g)/p; al=(al*(p-1)+l)/p; }
+    if (i>=p) out[i] = al===0 ? 100 : 100 - 100/(1+ag/al);
+  }
+  return out;
+}
+
+function initCharts() {
+  const cw = document.getElementById('chart');
+  const opts = { layout:{background:{color:'#0d1117'},textColor:'#c9d1d9'},
+    grid:{vertLines:{color:'#21262d'},horzLines:{color:'#21262d'}},
+    timeScale:{borderColor:'#444', timeVisible:true, secondsVisible:false}, crosshair:{mode:0} };
+  chart = LightweightCharts.createChart(cw, opts);
+  volSeries = chart.addHistogramSeries({ priceScaleId:'', lastValueVisible:false, priceLineVisible:false });
+  chart.priceScale('').applyOptions({ scaleMargins:{ top:0.8, bottom:0 } });
+  candleSeries = chart.addCandlestickSeries({ upColor:'#00e676', downColor:'#ff5252',
+    borderVisible:false, wickUpColor:'#00e676', wickDownColor:'#ff5252' });
+  ema9 = chart.addLineSeries({ color:'#00c8ff', lineWidth:2, priceLineVisible:false, lastValueVisible:false });
+  ema21 = chart.addLineSeries({ color:'#ffb300', lineWidth:2, priceLineVisible:false, lastValueVisible:false });
+  vwapS = chart.addLineSeries({ color:'#e040fb', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+  rsiChart = LightweightCharts.createChart(document.getElementById('rsi'), {
+    layout:{background:{color:'#0d1117'},textColor:'#8b949e'},
+    grid:{vertLines:{color:'#21262d'},horzLines:{color:'#21262d'}},
+    timeScale:{visible:false}, rightPriceScale:{scaleMargins:{top:0.1,bottom:0.1}} });
+  rsiSeries = rsiChart.addLineSeries({ color:'#ffeb3b', lineWidth:2 });
+  window.addEventListener('resize', () => {
+    chart.resize(cw.clientWidth, cw.clientHeight);
+    rsiChart.resize(document.getElementById('rsi').clientWidth, 110);
+  });
+}
+
+async function load() {
+  const sym = document.getElementById('sym').value;
+  const tf = document.getElementById('tf').value;
+  const banner = document.getElementById('banner');
+  banner.className = 'none'; banner.textContent = 'Loading ' + sym + '...';
+  try {
+    const r = await fetch('https://data-api.binance.vision/api/v3/klines?symbol=' + sym + '&interval=' + tf + '&limit=300');
+    const d = await r.json();
+    const candles = d.map(k => ({ time: Math.floor(k[0]/1000), open:+k[1], high:+k[2], low:+k[3], close:+k[4] }));
+    const closes = candles.map(c => c.close);
+    const e9 = ema(closes, 9), e21 = ema(closes, 21), rs = rsi(closes);
+    let pv = 0, vv = 0;
+    const vw = closes.map((c,i) => { const tp=(+d[i][2]+ +d[i][3]+c)/3; pv+=tp* +d[i][5]; vv+= +d[i][5]; return pv/vv; });
+    candleSeries.setData(candles);
+    ema9.setData(candles.map((c,i)=>({time:c.time, value:e9[i]})));
+    ema21.setData(candles.map((c,i)=>({time:c.time, value:e21[i]})));
+    vwapS.setData(candles.map((c,i)=>({time:c.time, value:vw[i]})));
+    volSeries.setData(candles.map((c,i)=>({time:c.time, value:+d[i][5], color: c.close>=c.open ? '#00e67666' : '#ff525266'})));
+    rsiSeries.setData(candles.map((c,i)=>({time:c.time, value:rs[i]})));
+    chart.timeScale().fitContent();
+    // signal
+    const n = candles.length, a = n-1, b = n-2;
+    const atr = (()=>{let s=0;for(let i=n-14;i<n;i++)s+=+d[i][2]- +d[i][3];return s/14;})();
+    const long = e9[a]>e21[a] && rs[a]<70 && closes[a]>vw[a] && (e9[b]<=e21[b] || closes[a]>e9[a]);
+    const short = e9[a]<e21[a] && rs[a]>30 && closes[a]<vw[a] && (e9[b]>=e21[b] || closes[a]<e9[a]);
+    const c = closes[a];
+    if (long || short) {
+      const sl = short ? c + 1.5*atr : c - 1.5*atr;
+      const tp = short ? c - 2*atr : c + 2*atr;
+      banner.className = short ? 'sell' : 'buy';
+      banner.textContent = (short?'SELL':'BUY') + ' | Entry: ' + c.toFixed(2) + ' | SL: ' + sl.toFixed(2) + ' | TP: ' + tp.toFixed(2) + ' | RSI: ' + rs[a].toFixed(1);
+      candleSeries.setMarkers([{ time: candles[a].time, position: short?'aboveBar':'belowBar',
+        color: short?'#ff5252':'#00e676', shape: short?'arrowDown':'arrowUp', text: short?'SELL':'BUY' }]);
+    } else {
+      banner.className = 'none';
+      banner.textContent = sym + ' ' + tf + ' | Price: ' + c.toFixed(2) + ' | RSI: ' + rs[a].toFixed(1) + ' | Signal: nahi';
+      candleSeries.setMarkers([]);
+    }
+  } catch(e) { banner.className='sell'; banner.textContent = 'Error: ' + e.message; }
+}
+
+document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+initCharts();
+load();
+document.getElementById('sym').onchange = load;
+document.getElementById('tf').onchange = load;
+setInterval(load, 60000);
+setInterval(()=>{ document.getElementById('clock').textContent = new Date().toLocaleTimeString(); }, 1000);
+</script>
+</body>
+</html>
