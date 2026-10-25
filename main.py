@@ -9,9 +9,23 @@ from kivy.clock import Clock
 from threading import Thread
 import requests, time
 
+# ==================== APNI MARZI ====================
+TITLE = "SMART TRADING BOT"   # <-- Apna naam yahan likhein!
 FAST, SLOW, RP = 9, 21, 14
 OB, OS = 70, 30
 SCAN = 300
+RISK_PCT = 2.0   # is se zyada SL = Risk Alert
+
+try:
+    from plyer import tts
+    def speak(msg):
+        try:
+            tts.speak(msg)
+        except Exception:
+            pass
+except Exception:
+    def speak(msg):
+        pass
 
 TF_MAP = {
  "Binance": {"1m":"1m","5m":"5m","15m":"15m","1h":"1h","4h":"4h","1d":"1d"},
@@ -104,45 +118,48 @@ def analyze(rows):
     short = ef[a] < es[a] and rsi[a] > OS and closes[a] < vwap[a] and (ef[b] >= es[b] or closes[a] < ef[a])
     g = None
     if long or short:
-        side = "LONG" if long else "SHORT"
+        side = "KHARID (BUY)" if long else "BECH (SELL)"
         c = closes[a]
         sl = c - 1.5*atr if long else c + 1.5*atr
         tp2 = c + 2*atr if long else c - 2*atr
+        risk = (abs(c-sl)/c*100) > RISK_PCT
         g = dict(side=side, price=round(c, 2), sl=round(sl, 2), tp=round(tp2, 2),
-                 rsi=round(rsi[a], 1), time=str(rows[a][0]))
+                 rsi=round(rsi[a], 1), time=str(rows[a][0]), risk=risk)
     return dict(price=round(closes[a], 2), rsi=round(rsi[a], 1), trend=trend, sig=g)
 
 class BotApp(App):
     def build(self):
         self.running = False
         root = BoxLayout(orientation="vertical", padding=10, spacing=6)
-        root.add_widget(Label(text="TRADING SIGNAL BOT", font_size="24sp", size_hint_y=None, height=50))
+        root.add_widget(Label(text=TITLE, font_size="24sp", size_hint_y=None, height=50,
+                              color=(0.2, 0.9, 1, 1), bold=True))
         row1 = BoxLayout(size_hint_y=None, height=44)
-        row1.add_widget(Label(text="Exchange:", size_hint_x=0.3))
-        self.ex = Spinner(text="Binance", values=list(TF_MAP.keys()), size_hint_x=0.7)
+        row1.add_widget(Label(text="Exchange:", size_hint_x=0.35))
+        self.ex = Spinner(text="Binance", values=list(TF_MAP.keys()), size_hint_x=0.65)
         row1.add_widget(self.ex)
         root.add_widget(row1)
         row2 = BoxLayout(size_hint_y=None, height=44)
-        row2.add_widget(Label(text="Timeframe:", size_hint_x=0.3))
-        self.tf = Spinner(text="1h", values=["1m","5m","15m","1h","4h","1d"], size_hint_x=0.7)
+        row2.add_widget(Label(text="Timeframe:", size_hint_x=0.35))
+        self.tf = Spinner(text="1h", values=["1m","5m","15m","1h","4h","1d"], size_hint_x=0.65)
         row2.add_widget(self.tf)
         root.add_widget(row2)
         row3 = BoxLayout(size_hint_y=None, height=44)
-        row3.add_widget(Label(text="Coins:", size_hint_x=0.3))
-        self.coins = TextInput(text="BTC/USDT, ETH/USDT", multiline=False, size_hint_x=0.7)
+        row3.add_widget(Label(text="Coins:", size_hint_x=0.35))
+        self.coins = TextInput(text="BTC/USDT, ETH/USDT", multiline=False, size_hint_x=0.65)
         row3.add_widget(self.coins)
         root.add_widget(row3)
         row4 = BoxLayout(size_hint_y=None, height=54)
-        self.bstart = Button(text="START", background_color=(0,0.7,0,1))
+        self.bstart = Button(text="START", background_color=(0, 0.65, 0.3, 1))
         self.bstart.bind(on_press=self.start)
-        self.bstop = Button(text="STOP", background_color=(0.8,0,0,1))
+        self.bstop = Button(text="STOP", background_color=(0.8, 0.1, 0.1, 1))
         self.bstop.bind(on_press=self.stop)
         row4.add_widget(self.bstart)
         row4.add_widget(self.bstop)
         root.add_widget(row4)
-        self.status = Label(text="START dabayein", size_hint_y=None, height=34)
+        self.status = Label(text="START dabayein", size_hint_y=None, height=34, color=(0.8, 0.8, 0.8, 1))
         root.add_widget(self.status)
-        self.log = Label(text="Bot tayyar hai.\n", size_hint_y=None, valign="top")
+        self.log = Label(text="Bot tayyar hai.\n", size_hint_y=None, valign="top",
+                         color=(0.85, 0.95, 1, 1))
         self.log.bind(texture_size=self.log.setter("size"))
         sv = ScrollView()
         sv.add_widget(self.log)
@@ -151,7 +168,7 @@ class BotApp(App):
         return root
 
     def add_log(self, line):
-        self.log.text = time.strftime("%H:%M:%S") + "  " + line + "\n" + self.log.text
+        self.log.text = line + "\n" + self.log.text
 
     def poll(self, dt):
         while not self.q.empty():
@@ -159,7 +176,10 @@ class BotApp(App):
             self.add_log(line)
             if line.startswith("SIGNAL"):
                 self.status.text = "SIGNAL AAYA!"
-                self.status.color = (0,1,0,1)
+                self.status.color = (0.2, 1, 0.4, 1)
+            if line.startswith("RISK"):
+                self.status.text = "RISK ALERT!"
+                self.status.color = (1, 0.3, 0.2, 1)
 
     q = None
     def start(self, inst):
@@ -172,13 +192,13 @@ class BotApp(App):
         tf = TF_MAP[ex][self.tf.text]
         syms = [x.strip() for x in self.coins.text.split(",") if x.strip()]
         self.status.text = "Bot chal raha hai..."
-        self.status.color = (0,0,1,1)
+        self.status.color = (0.3, 0.6, 1, 1)
         Thread(target=self.loop, args=(ex, syms, tf), daemon=True).start()
 
     def stop(self, inst):
         self.running = False
         self.status.text = "Bot ruk gaya. START dabayein."
-        self.status.color = (1,0,0,1)
+        self.status.color = (1, 0.5, 0.3, 1)
 
     def loop(self, ex, syms, tf):
         sent = set()
@@ -191,7 +211,12 @@ class BotApp(App):
                     g = a["sig"]
                     if g and (s, g["time"]) not in sent:
                         sent.add((s, g["time"]))
-                        self.q.put("SIGNAL: " + g["side"] + " " + s + " | Entry: " + str(g["price"]) + " | SL: " + str(g["sl"]) + " | TP: " + str(g["tp"]))
+                        line = "SIGNAL: " + g["side"] + " " + s + " | Entry: " + str(g["price"]) + " | SL: " + str(g["sl"]) + " | TP: " + str(g["tp"])
+                        self.q.put(line)
+                        speak("Signal! " + s + " " + g["side"])
+                        if g["risk"]:
+                            self.q.put("RISK ALERT: " + s + " ka stop loss bara hai! Khayal se!")
+                            speak("Risk alert! Stop loss bara hai!")
                 except Exception as e:
                     self.q.put("Error " + s + ": " + str(e))
             for _ in range(SCAN):
